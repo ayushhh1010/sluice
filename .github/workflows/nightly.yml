@@ -13,14 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: as many seeds as fit in 45 minutes (20,000+ on a 4-core runner)
         run: |
           go build -o bin/ ./cmd/sluice-sim
           bin/sluice-sim -seeds 100000 -budget 45m -start "$(date +%s)000" -json sim-nightly.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: sim-nightly, path: sim-nightly.json }
 
@@ -35,11 +35,11 @@ jobs:
           - { pkg: ./internal/segment, fn: FuzzParse }
           - { pkg: ./internal/sequencer, fn: FuzzApply }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - run: go test -run '^$' -fuzz ${{ matrix.target.fn }} -fuzztime 10m ${{ matrix.target.pkg }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with: { name: "fuzz-${{ matrix.target.fn }}", path: "**/testdata/fuzz/**" }
 
@@ -47,8 +47,8 @@ jobs:
     if: vars.R2_PROBE_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: R2 still honours put-if-absent (16 concurrent writers, exactly one winner)
         env:
@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: 30 minutes of agent kills (and one sequencer kill) against the deployed cluster
         env:
@@ -78,6 +78,6 @@ jobs:
           bin/sluice-chaos -b "k1.$DOMAIN:9093,k2.$DOMAIN:9094" -tls -user admin -pass "$ADMIN_PASSWORD" -duration 30m \
             -kill "$SSH 'cd ~/sluice/deploy && docker compose kill agent-{n} && docker compose up -d agent-{n}'" \
             -kill-sequencer "$SSH 'cd ~/sluice/deploy && docker compose kill sequencer-a && docker compose up -d sequencer-a'"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: chaos, path: "chaos-*.json" }

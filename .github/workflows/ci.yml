@@ -16,10 +16,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with: { version: latest }
       - name: generated code is up to date
         run: |
@@ -32,8 +32,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: unit, property, simulation and end-to-end tests (race detector)
         run: go test -race -count=1 ./...
@@ -43,25 +43,25 @@ jobs:
   simulate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: 200 seeds, each replayed twice for determinism
         run: |
           go build -o bin/ ./cmd/sluice-sim
           bin/sluice-sim -seeds 200 -start ${{ github.run_number }}000 -determinism -json sim.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: sim-summary, path: sim.json }
 
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - run: go build -trimpath ./cmd/...
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       - run: cd web && npm ci && npm run build
 
@@ -70,20 +70,23 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with: { go-version-file: go.mod }
       - name: franz-go, kcat, kafka-python, confluent-kafka-python
         run: test/compat/run.sh
       - name: S3 conformance against MinIO
+        # MinIO no longer publishes community images on Docker Hub; Chainguard
+        # builds MinIO from source and publishes :latest freely. The images
+        # run as UID 65532 and have no shell.
         env:
           SLUICE_TEST_S3: s3://sluice-test?endpoint=http://localhost:9000&region=us-east-1&path_style=true
           AWS_ACCESS_KEY_ID: minioadmin
           AWS_SECRET_ACCESS_KEY: minioadmin
         run: |
-          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin             --tmpfs /data:rw,uid=65532,gid=65532 cgr.dev/chainguard/minio:latest server /data
           for i in $(seq 1 30); do curl -sf localhost:9000/minio/health/ready && break; sleep 1; done
-          docker run --rm --network host --entrypoint sh minio/mc -c "mc alias set l http://localhost:9000 minioadmin minioadmin && mc mb l/sluice-test"
+          docker run --rm --network host -e MC_HOST_l=http://minioadmin:minioadmin@localhost:9000             cgr.dev/chainguard/minio-client:latest mb l/sluice-test
           go test -run TestS3 -count=1 -v ./internal/objstore
 
   image:
@@ -94,15 +97,15 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
