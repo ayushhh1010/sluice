@@ -1,0 +1,27 @@
+{
+  "config": {
+    "agents": 2,
+    "bootstrap": "",
+    "duration": "30s",
+    "partitions": 6,
+    "rate_mb_s": 0,
+    "record_size": 1024,
+    "store_jitter": "40ms",
+    "store_latency": "30ms"
+  },
+  "results": [
+    {
+      "flush_window": "250ms",
+      "records": 2148448,
+      "mb_per_s": 73.33369173333334,
+      "produce_p50_ms": 16044.743,
+      "produce_p99_ms": 20361.479,
+      "produce_p999_ms": 20532.171,
+      "e2e_p50_ms": 15753.672,
+      "e2e_p99_ms": 20413.298,
+      "puts_per_gb": 404.99802066421904,
+      "puts_per_s": 29.7,
+      "class_a_usd_per_gb": 0.0018224910929889857
+    }
+  ]
+}

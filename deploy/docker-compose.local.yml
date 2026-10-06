@@ -1,0 +1,71 @@
+# Local stack: MinIO instead of R2, plaintext listeners, no TLS or SASL.
+#   docker compose -f deploy/docker-compose.local.yml up --build
+#   kcat -b localhost:9092 -L
+name: sluice-local
+
+x-sluice: &sluice
+  build: { context: .., dockerfile: Dockerfile }
+  image: sluice:local
+  restart: unless-stopped
+  environment:
+    SLUICE_STORE: s3://sluice?endpoint=http://minio:9000&region=us-east-1&path_style=true
+    SLUICE_CLUSTER: local
+    SLUICE_SEQUENCERS: seq-a=sequencer-a:7000,seq-b=sequencer-b:7000
+    AWS_ACCESS_KEY_ID: minioadmin
+    AWS_SECRET_ACCESS_KEY: minioadmin
+  depends_on:
+    minio-init: { condition: service_completed_successfully }
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address :9001
+    ports: ["9000:9000", "9001:9001"]
+    environment: { MINIO_ROOT_USER: minioadmin, MINIO_ROOT_PASSWORD: minioadmin }
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      retries: 30
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on: { minio: { condition: service_healthy } }
+    entrypoint: ["sh", "-c", "mc alias set local http://minio:9000 minioadmin minioadmin && mc mb -p local/sluice"]
+
+  sequencer-a:
+    <<: *sluice
+    entrypoint: ["sluice-sequencer"]
+    command: [--node=seq-a, --peers=seq-b=sequencer-b:7000]
+
+  sequencer-b:
+    <<: *sluice
+    entrypoint: ["sluice-sequencer"]
+    command: [--node=seq-b, --peers=seq-a=sequencer-a:7000]
+
+  agent-1:
+    <<: *sluice
+    entrypoint: ["sluice-agent"]
+    command: [--id=agent-1, --node-id=1, --advertise-internal=localhost:9092, --killed-restart-delay=10s]
+    ports: ["9092:9092", "8080:8080", "8081:8081"]
+
+  agent-2:
+    <<: *sluice
+    entrypoint: ["sluice-agent"]
+    command: [--id=agent-2, --node-id=2, --kafka-internal=:9093, --advertise-internal=localhost:9093, --killed-restart-delay=10s]
+    ports: ["9093:9093", "8082:8080", "8083:8081"]
+
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/sluice.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]

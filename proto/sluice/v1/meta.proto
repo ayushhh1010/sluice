@@ -1,0 +1,210 @@
+// Durable formats: metadata log entries and sequencer snapshots.
+//
+// Every object described here is immutable once written. Field numbers are
+// part of the on-disk format; never reuse or renumber them.
+syntax = "proto3";
+
+package sluice.v1;
+
+option go_package = "github.com/ayushhh1010/sluice/gen/sluice/v1;sluicev1";
+
+// Entry is one metadata log object, stored at meta/log/<seq:020d>.entry and
+// created with If-None-Match: *. Only one writer can ever create a given seq.
+message Entry {
+  // Must equal the sequence number in the object key.
+  uint64 seq = 1;
+  // Sequencer epoch that wrote the entry.
+  uint64 epoch = 2;
+  // Writer's wall clock. Used only for GC deadlines and retention, never for
+  // ordering or fencing.
+  int64 written_unix_ms = 3;
+  // Node name of the writing sequencer (informational, used as leader hint).
+  string writer = 4;
+  // Operations applied atomically, in order. Group commit packs many
+  // operations of different kinds into one entry (one PUT).
+  repeated Op ops = 5;
+}
+
+message Op {
+  oneof body {
+    BecomeLeader become_leader = 10;
+    CommitBatches commit = 11;
+    CreateTopic create_topic = 12;
+    DeleteTopic delete_topic = 13;
+    CommitOffsets commit_offsets = 14;
+    AllocProducerIds alloc_pids = 15;
+    ReplaceObjects replace = 16;
+    Truncate truncate = 17;
+  }
+}
+
+// BecomeLeader starts a new epoch. Entry.epoch carries the new epoch.
+message BecomeLeader {
+  string node = 1;
+}
+
+// CommitBatches records the outcome of one agent segment: for every batch in
+// the segment footer, either its assigned base offset or why it was not
+// appended. Storing outcomes (not just successes) lets a retried
+// CommitBatches for the same object key return the identical answer, before
+// and after a sequencer failover.
+message CommitBatches {
+  string object_key = 1;
+  repeated BatchResult results = 2;
+  // Object creation time taken from the key's ULID (agent clock).
+  int64 object_created_ms = 3;
+}
+
+message BatchResult {
+  bytes topic_id = 1;
+  uint32 partition = 2;
+  uint32 offset_in_obj = 3;
+  uint32 length = 4;
+  uint32 records = 5;
+  int64 max_ts = 6;
+  int64 producer_id = 7;
+  int32 producer_epoch = 8;
+  int32 base_seq = 9;
+  // Assigned base offset. For duplicates, the base offset of the original.
+  int64 base_offset = 10;
+  // Kafka error code; non-zero means the batch was not appended.
+  int32 error_code = 11;
+  // Idempotent duplicate of an already-appended batch: not appended again,
+  // base_offset is the original's.
+  bool duplicate = 12;
+}
+
+message CreateTopic {
+  bytes topic_id = 1;
+  string name = 2;
+  uint32 partitions = 3;
+  int64 retention_ms = 4;
+  // Principal that created the topic; drives public-namespace quotas.
+  string owner = 5;
+  int64 created_unix_ms = 6;
+}
+
+message DeleteTopic {
+  bytes topic_id = 1;
+}
+
+message CommitOffsets {
+  string group = 1;
+  repeated OffsetCommit offsets = 2;
+}
+
+message OffsetCommit {
+  string topic = 1;
+  uint32 partition = 2;
+  int64 offset = 3;
+  int32 leader_epoch = 4;
+  string metadata = 5;
+}
+
+// AllocProducerIds reserves producer IDs below `next`. IDs handed out after a
+// failover always come from a fresh range, so they never repeat.
+message AllocProducerIds {
+  int64 next = 1;
+}
+
+// ReplaceObjects is the result of a merge. Each replacement swaps one batch
+// ref to a new location only if the ref is still current at apply time.
+message ReplaceObjects {
+  repeated Replacement replacements = 1;
+}
+
+message Replacement {
+  bytes topic_id = 1;
+  uint32 partition = 2;
+  int64 base_offset = 3;
+  string old_key = 4;
+  string new_key = 5;
+  uint32 new_offset_in_obj = 6;
+}
+
+// Truncate advances log-start offsets (retention).
+message Truncate {
+  repeated LogStart starts = 1;
+}
+
+message LogStart {
+  bytes topic_id = 1;
+  uint32 partition = 2;
+  int64 log_start = 3;
+}
+
+// BatchRef locates one Kafka record batch inside an object.
+message BatchRef {
+  string object_key = 1;
+  uint32 offset_in_obj = 2;
+  uint32 length = 3;
+  uint32 records = 4;
+  int64 base_offset = 5;
+  int64 max_ts = 6;
+  // Metadata log entry that committed (or last replaced) this batch.
+  uint64 commit_seq = 7;
+}
+
+// Snapshot is sequencer state as of entry `seq`, stored at
+// meta/snap/<seq:020d>.snap. Object reference counts are derived on load.
+message Snapshot {
+  uint64 seq = 1;
+  uint64 epoch = 2;
+  string leader = 3;
+  repeated TopicState topics = 4;
+  repeated GroupOffsets groups = 5;
+  repeated ProducerState producers = 6;
+  int64 next_producer_id = 7;
+  int64 producer_ids_reserved = 8;
+  repeated Tombstone tombstones = 9;
+  // Most recent commits, oldest first, for CommitBatches retry dedup.
+  repeated CommitBatches recent_commits = 10;
+  // Sequence numbers of earlier snapshots still retained, oldest first.
+  repeated uint64 prior_snapshots = 11;
+  // Log entries at or below this seq have been garbage collected.
+  uint64 log_gc_floor = 12;
+  // SHA-256 of the encoded entry at `seq`. A writer that wins slot seq+1
+  // checks the stored entry at seq against it (see the GC safety argument
+  // in DESIGN.md).
+  bytes last_entry_sha256 = 13;
+}
+
+message TopicState {
+  bytes id = 1;
+  string name = 2;
+  int64 retention_ms = 3;
+  string owner = 4;
+  int64 created_unix_ms = 5;
+  repeated PartitionState partitions = 6;
+}
+
+message PartitionState {
+  int64 log_start = 1;
+  int64 next_offset = 2;
+  repeated BatchRef refs = 3;
+}
+
+message GroupOffsets {
+  string group = 1;
+  repeated OffsetCommit offsets = 2;
+}
+
+message ProducerState {
+  int64 producer_id = 1;
+  int32 epoch = 2;
+  bytes topic_id = 3;
+  uint32 partition = 4;
+  // Up to the last five appended batches, oldest first.
+  repeated SeqRange recent = 5;
+}
+
+message SeqRange {
+  int32 first_seq = 1;
+  int32 last_seq = 2;
+  int64 base_offset = 3;
+}
+
+message Tombstone {
+  string key = 1;
+  int64 delete_after_unix_ms = 2;
+}

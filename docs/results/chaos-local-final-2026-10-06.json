@@ -1,0 +1,16 @@
+{
+  "acked": 71133,
+  "duration": "3m0s",
+  "fetches": 3420,
+  "kills": [
+    "2026-10-06T15:16:01+05:30 agent-2",
+    "2026-10-06T15:16:25+05:30 agent-2",
+    "2026-10-06T15:16:59+05:30 sequencer",
+    "2026-10-06T15:17:20+05:30 agent-1",
+    "2026-10-06T15:17:56+05:30 agent-2"
+  ],
+  "max_produce_stall_ms": 3533,
+  "sends": 71133,
+  "topic": "chaos-1791279921",
+  "violations": null
+}

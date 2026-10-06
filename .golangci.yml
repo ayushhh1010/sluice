@@ -1,0 +1,48 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard
+  enable:
+    - forbidigo
+    - errorlint
+    - misspell
+    - unconvert
+    - bodyclose
+    - gosec
+  settings:
+    errcheck:
+      # Fire-and-forget calls whose failure has no useful handling: closing
+      # sockets, servers and read bodies, and writes to terminals.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (*net/http.Server).Close
+        - (*google.golang.org/grpc.ClientConn).Close
+        - (*text/tabwriter.Writer).Flush
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    forbidigo:
+      forbid:
+        - pattern: ^time\.(Now|Since|Until|Sleep|After|AfterFunc|Tick|NewTimer|NewTicker)$
+          msg: deterministic cores take time from Step's now argument
+        - pattern: ^(rand|crand)\.
+          msg: deterministic cores use proc.Rand seeded by the driver
+    gosec:
+      excludes:
+        - G104 # unchecked errors are covered by errcheck
+        - G115 # integer conversions are bounds-checked where they matter
+        - G404 # math/rand is fine outside cores (jitter, playground names)
+  exclusions:
+    rules:
+      # The sans-I/O rule applies to the cores only (also enforced by
+      # internal/sim/purity_test.go, which additionally bans goroutines).
+      - path-except: ^internal/(agent|sequencer|cache|placement|proc|metalog|segment|kbatch|checker)/
+        linters: [forbidigo]
+      - path: _test\.go
+        linters: [gosec, forbidigo]
+formatters:
+  enable: [gofmt]

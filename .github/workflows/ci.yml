@@ -1,0 +1,142 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - uses: golangci/golangci-lint-action@v8
+        with: { version: latest }
+      - name: generated code is up to date
+        run: |
+          # Pinned: the generator versions are stamped into gen/.
+          go install github.com/bufbuild/buf/cmd/buf@v1.73.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+          buf lint && buf generate && git diff --exit-code gen/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: unit, property, simulation and end-to-end tests (race detector)
+        run: go test -race -count=1 ./...
+      - name: the checker catches every planted bug
+        run: go test -tags sluice_bugs -run Planted -count=1 ./internal/sim
+
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: 200 seeds, each replayed twice for determinism
+        run: |
+          go build -o bin/ ./cmd/sluice-sim
+          bin/sluice-sim -seeds 200 -start ${{ github.run_number }}000 -determinism -json sim.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: sim-summary, path: sim.json }
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - run: go build -trimpath ./cmd/...
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: cd web && npm ci && npm run build
+
+  compat:
+    if: github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: franz-go, kcat, kafka-python, confluent-kafka-python
+        run: test/compat/run.sh
+      - name: S3 conformance against MinIO
+        env:
+          SLUICE_TEST_S3: s3://sluice-test?endpoint=http://localhost:9000&region=us-east-1&path_style=true
+          AWS_ACCESS_KEY_ID: minioadmin
+          AWS_SECRET_ACCESS_KEY: minioadmin
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+          for i in $(seq 1 30); do curl -sf localhost:9000/minio/health/ready && break; sleep 1; done
+          docker run --rm --network host --entrypoint sh minio/mc -c "mc alias set l http://localhost:9000 minioadmin minioadmin && mc mb l/sluice-test"
+          go test -run TestS3 -count=1 -v ./internal/objstore
+
+  image:
+    if: github.event_name == 'push'
+    needs: [test, simulate, compat]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    if: github.event_name == 'push' && vars.DEPLOY_ENABLED == 'true'
+    needs: [image]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: rolling restart over SSH (standby sequencer first, then each agent once healthy)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/sluice/deploy
+            git -C .. pull --ff-only
+            docker compose pull
+            docker compose up -d --no-deps sequencer-b && sleep 5
+            docker compose up -d --no-deps sequencer-a && sleep 15
+            for a in agent-1 agent-2; do
+              docker compose up -d --no-deps "$a"
+              for i in $(seq 1 30); do
+                curl -sf "http://127.0.0.1:$( [ "$a" = agent-1 ] && echo 18081 || echo 18083 )/healthz" >/dev/null && break || sleep 2
+              done
+            done
+            docker compose up -d caddy prometheus grafana

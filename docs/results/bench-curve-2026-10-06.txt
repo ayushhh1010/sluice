@@ -1,0 +1,13 @@
+flush 50ms: 58592 records, produce p99 601 ms, 29.2 PUTs/s
+flush 100ms: 58593 records, produce p99 633 ms, 22.2 PUTs/s
+flush 250ms: 58593 records, produce p99 690 ms, 11.3 PUTs/s
+flush 500ms: 58595 records, produce p99 1150 ms, 6.3 PUTs/s
+flush 1s: 58594 records, produce p99 2175 ms, 3.8 PUTs/s
+
+| flush window | MB/s | produce p50 | p99 | p99.9 | e2e p50 | e2e p99 | PUTs/s | PUTs per GB | Class A $/GB |
+|---|---|---|---|---|---|---|---|---|---|
+| 50ms | 2.00 | 437 ms | 601 ms | 657 ms | 439 ms | 602 ms | 29.2 | 14600 | $0.0657 |
+| 100ms | 2.00 | 447 ms | 633 ms | 697 ms | 449 ms | 635 ms | 22.2 | 11100 | $0.0500 |
+| 250ms | 2.00 | 389 ms | 690 ms | 767 ms | 392 ms | 694 ms | 11.3 | 5650 | $0.0254 |
+| 500ms | 2.00 | 697 ms | 1150 ms | 1191 ms | 708 ms | 1157 ms | 6.3 | 3133 | $0.0141 |
+| 1s | 2.00 | 1483 ms | 2175 ms | 2219 ms | 1510 ms | 2194 ms | 3.8 | 1900 | $0.0085 |

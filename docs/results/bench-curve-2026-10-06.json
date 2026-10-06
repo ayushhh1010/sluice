@@ -1,0 +1,79 @@
+{
+  "config": {
+    "agents": 2,
+    "bootstrap": "",
+    "duration": "30s",
+    "partitions": 6,
+    "rate_mb_s": 2,
+    "record_size": 1024,
+    "store_jitter": "40ms",
+    "store_latency": "30ms"
+  },
+  "results": [
+    {
+      "flush_window": "50ms",
+      "records": 58592,
+      "mb_per_s": 1.9999402666666666,
+      "produce_p50_ms": 436.553,
+      "produce_p99_ms": 601.492,
+      "produce_p999_ms": 657.191,
+      "e2e_p50_ms": 438.927,
+      "e2e_p99_ms": 602.093,
+      "puts_per_gb": 14600.436066357182,
+      "puts_per_s": 29.2,
+      "class_a_usd_per_gb": 0.06570196229860732
+    },
+    {
+      "flush_window": "100ms",
+      "records": 58593,
+      "mb_per_s": 1.9999744,
+      "produce_p50_ms": 446.89,
+      "produce_p99_ms": 633.493,
+      "produce_p999_ms": 696.517,
+      "e2e_p50_ms": 448.865,
+      "e2e_p99_ms": 634.601,
+      "puts_per_gb": 11100.142081818647,
+      "puts_per_s": 22.2,
+      "class_a_usd_per_gb": 0.04995063936818391
+    },
+    {
+      "flush_window": "250ms",
+      "records": 58593,
+      "mb_per_s": 1.9999744,
+      "produce_p50_ms": 389.019,
+      "produce_p99_ms": 689.753,
+      "produce_p999_ms": 766.681,
+      "e2e_p50_ms": 392.333,
+      "e2e_p99_ms": 693.911,
+      "puts_per_gb": 5650.072320925708,
+      "puts_per_s": 11.3,
+      "class_a_usd_per_gb": 0.025425325444165682
+    },
+    {
+      "flush_window": "500ms",
+      "records": 58595,
+      "mb_per_s": 2.000042666666667,
+      "produce_p50_ms": 697.194,
+      "produce_p99_ms": 1150.319,
+      "produce_p999_ms": 1190.719,
+      "e2e_p50_ms": 707.536,
+      "e2e_p99_ms": 1157.383,
+      "puts_per_gb": 3133.2664903148734,
+      "puts_per_s": 6.266666666666667,
+      "class_a_usd_per_gb": 0.01409969920641693
+    },
+    {
+      "flush_window": "1s",
+      "records": 58594,
+      "mb_per_s": 2.0000085333333333,
+      "produce_p50_ms": 1483.459,
+      "produce_p99_ms": 2175.39,
+      "produce_p999_ms": 2218.602,
+      "e2e_p50_ms": 1510.133,
+      "e2e_p99_ms": 2194.272,
+      "puts_per_gb": 1899.9918933679216,
+      "puts_per_s": 3.8,
+      "class_a_usd_per_gb": 0.008549963520155647
+    }
+  ]
+}

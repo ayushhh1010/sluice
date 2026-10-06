@@ -1,0 +1,258 @@
+// Internal RPC between agents and sequencers.
+//
+// The service is deliberately a single envelope call plus one stream: the
+// deterministic cores exchange Request/Response values, and the gRPC layer is
+// a thin transport for them. Kafka APIs that the sequencer owns (metadata,
+// topics, groups, offsets, producer IDs) are forwarded as raw Kafka request
+// bytes so there is exactly one implementation of each.
+syntax = "proto3";
+
+package sluice.v1;
+
+import "sluice/v1/meta.proto";
+
+option go_package = "github.com/ayushhh1010/sluice/gen/sluice/v1;sluicev1";
+
+service SequencerService {
+  rpc Call(Request) returns (Response);
+  // Server stream of commit (high watermark) notifications.
+  rpc Watch(WatchRequest) returns (stream WatchEvent);
+}
+
+message Request {
+  // Highest sequencer epoch the caller has seen. A leader receiving a higher
+  // epoch knows it has been deposed.
+  uint64 epoch_seen = 1;
+  // Caller identity (agent ID or sequencer node name).
+  string from = 2;
+  oneof body {
+    CommitRequest commit = 10;
+    LookupRequest lookup = 11;
+    HeartbeatRequest heartbeat = 12;
+    KafkaRequest kafka = 13;
+    PingRequest ping = 14;
+    InspectRequest inspect = 15;
+    ChaosRequest chaos = 16;
+  }
+}
+
+enum Code {
+  CODE_OK = 0;
+  // This sequencer is not the active leader; see leader_hint.
+  CODE_NOT_LEADER = 1;
+  // Transient failure; retry the same request.
+  CODE_UNAVAILABLE = 2;
+  // Malformed or rejected request; do not retry.
+  CODE_INVALID = 3;
+}
+
+message Response {
+  uint64 epoch = 1;
+  string leader_hint = 2;
+  Code code = 3;
+  string message = 4;
+  oneof body {
+    CommitResponse commit = 10;
+    LookupResponse lookup = 11;
+    HeartbeatResponse heartbeat = 12;
+    KafkaResponse kafka = 13;
+    PingResponse ping = 14;
+    InspectResponse inspect = 15;
+    ChaosResponse chaos = 16;
+  }
+}
+
+// FooterEntry mirrors one SLC1 segment footer entry.
+message FooterEntry {
+  bytes topic_id = 1;
+  uint32 partition = 2;
+  uint32 offset_in_obj = 3;
+  uint32 length = 4;
+  uint32 records = 5;
+  int64 max_ts = 6;
+  int64 producer_id = 7;
+  int32 producer_epoch = 8;
+  int32 base_seq = 9;
+}
+
+// CommitRequest commits one or more uploaded segments from one agent, in
+// flush order. The sequencer assigns offsets in exactly this order, so an
+// agent can keep a single commit in flight and still never reorder a
+// pipelining producer's batches.
+message CommitRequest {
+  repeated SegmentCommit segments = 1;
+}
+
+message SegmentCommit {
+  string object_key = 1;
+  int64 object_created_ms = 2;
+  repeated FooterEntry entries = 3;
+}
+
+message CommitResponse {
+  // One outcome per segment, in request order.
+  repeated SegmentOutcome segments = 1;
+}
+
+message SegmentOutcome {
+  // CODE_OK: results are final. CODE_UNAVAILABLE: retry the segment.
+  // CODE_INVALID: the segment can never be committed (too old, or already
+  // committed and forgotten); give up on it.
+  Code code = 1;
+  string message = 2;
+  repeated BatchResult results = 3;
+}
+
+message LookupRequest {
+  string topic = 1;
+  uint32 partition = 2;
+  int64 offset = 3;
+  int32 max_bytes = 4;
+}
+
+message LookupResponse {
+  // Kafka error code (UNKNOWN_TOPIC_OR_PARTITION, OFFSET_OUT_OF_RANGE).
+  int32 error_code = 1;
+  bytes topic_id = 2;
+  int64 high_watermark = 3;
+  int64 log_start = 4;
+  repeated BatchRef refs = 5;
+}
+
+message Listener {
+  string name = 1;
+  string host = 2;
+  int32 port = 3;
+}
+
+message AgentInfo {
+  string id = 1;
+  int32 node_id = 2;
+  repeated Listener listeners = 3;
+  string http_addr = 4;
+  // Distinguishes restarts of the same agent.
+  string incarnation = 5;
+}
+
+message TopicInfo {
+  bytes id = 1;
+  string name = 2;
+  uint32 partitions = 3;
+  int64 retention_ms = 4;
+}
+
+message HeartbeatRequest {
+  AgentInfo agent = 1;
+  uint64 topics_version = 2;
+  // Class A object-store operations since the previous heartbeat.
+  int64 class_a_ops = 3;
+}
+
+message HeartbeatResponse {
+  repeated AgentInfo members = 1;
+  uint64 topics_version = 2;
+  // Set only when topics_version differs from the request.
+  bool topics_included = 3;
+  repeated TopicInfo topics = 4;
+  // Cost guard tripped: public listeners must reject writes.
+  bool read_only = 5;
+  // Chaos: the receiving agent must exit.
+  bool die = 6;
+  int64 class_a_today = 7;
+}
+
+message KafkaRequest {
+  int32 api_key = 1;
+  int32 api_version = 2;
+  // Request body without the Kafka request header.
+  bytes body = 3;
+  string principal = 4;
+  // Listener the client connected to (selects advertised addresses).
+  string listener = 5;
+  // Public listener: namespace and size limits apply.
+  bool public = 6;
+  string client_id = 7;
+}
+
+message KafkaResponse {
+  // Response body without the Kafka response header.
+  bytes body = 1;
+}
+
+message PingRequest {}
+
+message PingResponse {
+  bool leader = 1;
+  uint64 epoch = 2;
+  string node = 3;
+  // Milliseconds this node has been recovering (0 if not recovering). A
+  // standby treats a recently recovering peer as alive, which avoids two
+  // back-to-back takeovers when a crashed leader restarts.
+  int64 recovering_ms = 4;
+}
+
+message InspectRequest {
+  oneof what {
+    InspectPartition partition = 1;
+    InspectObjects objects = 2;
+    InspectCluster cluster = 3;
+  }
+}
+
+message InspectPartition {
+  string topic = 1;
+  uint32 partition = 2;
+  int64 from_offset = 3;
+  int32 limit = 4;
+}
+
+message InspectObjects {
+  int32 limit = 1;
+}
+
+message InspectCluster {}
+
+message InspectResponse {
+  int64 high_watermark = 1;
+  int64 log_start = 2;
+  repeated BatchRef refs = 3;
+  repeated CommitBatches objects = 4;
+  ClusterInfo cluster = 5;
+}
+
+message ClusterInfo {
+  string leader = 1;
+  uint64 epoch = 2;
+  uint64 metalog_seq = 3;
+  repeated AgentInfo agents = 4;
+  int64 class_a_today = 5;
+  bool read_only = 6;
+  int64 topics = 7;
+}
+
+message ChaosRequest {
+  // Agent to kill; empty picks one at random.
+  string agent_id = 1;
+}
+
+message ChaosResponse {
+  string killed = 1;
+  // Milliseconds until another kill is allowed.
+  int64 retry_after_ms = 2;
+}
+
+message WatchRequest {
+  string agent_id = 1;
+}
+
+message WatchEvent {
+  uint64 epoch = 1;
+  repeated Watermark watermarks = 2;
+}
+
+message Watermark {
+  bytes topic_id = 1;
+  uint32 partition = 2;
+  int64 high_watermark = 3;
+  int64 log_start = 4;
+}

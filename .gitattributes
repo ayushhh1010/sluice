@@ -1,0 +1,4 @@
+# Keep LF everywhere: CI runs the shell scripts on Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

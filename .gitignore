@@ -1,0 +1,12 @@
+/bin/
+*.exe
+/sluice-data/
+/bench-results/
+chaos-history.json
+chaos-result.json
+web/node_modules/
+web/dist/
+.env
+coverage.out
+*.test
+.claude/

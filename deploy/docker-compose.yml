@@ -1,0 +1,115 @@
+# Production stack: one small VM plus a Cloudflare R2 bucket.
+# Agents and sequencers are stateless; disaster recovery is "point a fresh
+# VM at the same bucket". Copy .env.example to .env and fill it in.
+name: sluice
+
+x-sluice: &sluice
+  image: ${SLUICE_IMAGE:-ghcr.io/ayushhh1010/sluice:latest}
+  restart: unless-stopped
+  env_file: .env
+  networks: [internal]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  sequencer-a:
+    <<: *sluice
+    entrypoint: ["sluice-sequencer"]
+    command:
+      - --node=seq-a
+      - --peers=seq-b=sequencer-b:7000
+      - --cost-guard-daily=${COST_GUARD_DAILY:-30000}
+
+  sequencer-b:
+    <<: *sluice
+    entrypoint: ["sluice-sequencer"]
+    command:
+      - --node=seq-b
+      - --peers=seq-a=sequencer-a:7000
+      - --cost-guard-daily=${COST_GUARD_DAILY:-30000}
+
+  agent-1:
+    <<: *sluice
+    entrypoint: ["sluice-agent"]
+    command:
+      - --id=agent-1
+      - --node-id=1
+      - --advertise-internal=agent-1:9092
+      - --kafka-public=:9093
+      - --advertise-public=k1.${DOMAIN}:9093
+      - --tls-cert=/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/k1.${DOMAIN}/k1.${DOMAIN}.crt
+      - --tls-key=/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/k1.${DOMAIN}/k1.${DOMAIN}.key
+    # Kafka is public; the admin port (metrics, health, pprof) is loopback only.
+    ports: ["9093:9093", "127.0.0.1:18081:8081"]
+    volumes: ["caddy_data:/caddy:ro"]
+    user: "0:0" # Caddy writes its private keys 0600 as root
+    depends_on: [caddy]
+
+  agent-2:
+    <<: *sluice
+    entrypoint: ["sluice-agent"]
+    command:
+      - --id=agent-2
+      - --node-id=2
+      - --advertise-internal=agent-2:9092
+      - --kafka-public=:9093
+      - --advertise-public=k2.${DOMAIN}:9094
+      - --tls-cert=/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/k2.${DOMAIN}/k2.${DOMAIN}.crt
+      - --tls-key=/caddy/caddy/certificates/acme-v02.api.letsencrypt.org-directory/k2.${DOMAIN}/k2.${DOMAIN}.key
+    ports: ["9094:9093", "127.0.0.1:18083:8081"]
+    volumes: ["caddy_data:/caddy:ro"]
+    user: "0:0"
+    depends_on: [caddy]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../web/dist:/srv/playground:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [internal]
+
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks: [internal]
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: https://${DOMAIN}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/sluice.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks: [internal]
+
+networks:
+  internal: {}
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  prometheus_data: {}
+  grafana_data: {}

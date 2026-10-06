@@ -1,0 +1,5 @@
+flush 250ms: 58592 records, produce p99 329 ms, 13.0 PUTs/s
+
+| flush window | MB/s | produce p50 | p99 | p99.9 | e2e p50 | e2e p99 | PUTs/s | PUTs per GB | Class A $/GB |
+|---|---|---|---|---|---|---|---|---|---|
+| 250ms | 2.00 | 222 ms | 329 ms | 345 ms | 225 ms | 337 ms | 13.0 | 6484 | $0.0292 |

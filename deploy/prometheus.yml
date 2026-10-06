@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: sluice
+    static_configs:
+      - targets: [sequencer-a:7001, sequencer-b:7001, agent-1:8081, agent-2:8081]
