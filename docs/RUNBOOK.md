@@ -36,6 +36,10 @@ recovery.
 2. **VM.** Any small Linux VM with Docker (an Oracle Cloud Always Free ARM instance works). Open TCP 80, 443, 9093 and 9094 only.
 3. **DNS.** Point `<domain>`, `k1.<domain>` and `k2.<domain>` at the VM. On Cloudflare, set the `k1`/`k2` records to **DNS only**: the
    proxy does not carry raw Kafka TCP.
+   **No domain? Use DuckDNS (free).** Register `<name>.duckdns.org` at https://www.duckdns.org and set its IP to the VM. DuckDNS
+   answers for every sub-name too, so `k1.<name>.duckdns.org` and `k2.<name>.duckdns.org` work with no extra records, and
+   `duckdns.org` is on the Public Suffix List, so Let's Encrypt issues the three certificates without shared rate limits. Use
+   `DOMAIN=<name>.duckdns.org`.
 4. **Configure.**
    ```bash
    git clone <repo> ~/sluice && cd ~/sluice/deploy && cp .env.example .env && chmod 600 .env
