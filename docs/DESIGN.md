@@ -104,7 +104,8 @@ recovery). If N had been deleted, then by Rule 1 so had N−1, so the check fail
 costs one GET per append and no clocks. `TestWinningAGarbageCollectedSlotStepsDown` pins it. Slot 1 has no predecessor, so a writer that wins it instead LISTs
 `meta/snap/` and requires it to be empty: GC never runs before two snapshots exist, so any snapshot means slot 1 was written and later
 deleted. The nightly simulator found that hole (BUGS.md #17): a node listed no snapshots, was paused mid-recovery, and resumed after GC
-to lead from an empty state.
+to lead from an empty state. A writer that fails the check leaves its rejected entry below the GC floor: a few hundred
+bytes that recovery never reads.
 
 **Rule 3 — recovery starts from the newest snapshot that exists, found with LIST.** The PRD's `meta/head` hint is unsafe: a zombie can
 rewrite it to point at an old snapshot whose following entries were already deleted, and recovery would then probe into the deleted

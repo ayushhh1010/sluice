@@ -132,23 +132,27 @@ func CheckBucket(ctx context.Context, st objstore.Store, cluster string, gcGrace
 	if err != nil {
 		return nil, nil, err
 	}
-	// The oldest starting point with an unbroken log after it: genesis if
-	// entry 1 survives, else the oldest snapshot whose next entry exists
-	// (deleted entries always form a prefix).
+	// The oldest starting point whose replay reaches the newest snapshot:
+	// genesis if entry 1 survives, else the oldest such snapshot. A zombie
+	// that "wins" an already-collected slot leaves its entry (and maybe a
+	// stale snapshot) below the GC floor; recovery never reads them, so a
+	// start whose replay stops short of the newest snapshot is skipped.
 	keys := metalog.NewKeys(cluster)
-	from := FromGenesis
-	if _, err := st.Head(ctx, keys.Log(1)); err != nil && len(snaps) > 0 {
-		from = snaps[len(snaps)-1]
-		for _, s := range snaps {
-			if _, err := st.Head(ctx, keys.Log(s+1)); err == nil {
-				from = s
-				break
-			}
+	var candidates []uint64
+	if _, err := st.Head(ctx, keys.Log(1)); err == nil {
+		candidates = append(candidates, FromGenesis)
+	}
+	candidates = append(candidates, snaps...)
+	var a *sequencer.State
+	from := uint64(0)
+	for _, c := range candidates {
+		if s, err := Replay(ctx, st, cluster, c, gcGraceMs, recentLimit); err == nil && s.Seq >= newest.Seq {
+			a, from = s, c
+			break
 		}
 	}
-	a, err := Replay(ctx, st, cluster, from, gcGraceMs, recentLimit)
-	if err != nil {
-		return nil, nil, fmt.Errorf("replay from %d: %w", from, err)
+	if a == nil { // no snapshots at all: compare recovery with itself
+		a, from = newest, 0
 	}
 	b, err := Replay(ctx, st, cluster, from, gcGraceMs, recentLimit)
 	if err != nil {
