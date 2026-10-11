@@ -49,7 +49,9 @@ tps = [TopicPartition(topic, p) for p in range(4)]
 committed, deadline = [], time.time() + 30
 while time.time() < deadline:
     for c in members:
-        c.poll(0.2)
+        # Drain in batches: a member that took a partition over after a
+        # rebalance re-reads from the last successful commit.
+        c.consume(num_messages=500, timeout=0.5)
         try:
             c.commit(asynchronous=False)
         except KafkaException:
