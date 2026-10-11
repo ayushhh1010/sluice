@@ -101,7 +101,10 @@ after the whole range is gone; every round, by any leader, starts at or below th
 **Rule 2 — confirm the predecessor after winning a slot.** After winning slot N (by PUT or by a 412 on our own landed write), the writer
 GETs N−1 and checks it is byte-identical to the entry it applied there (the SHA-256 travels in snapshots for the first append after
 recovery). If N had been deleted, then by Rule 1 so had N−1, so the check fails and the writer steps down without acknowledging. This
-costs one GET per append and no clocks. `TestWinningAGarbageCollectedSlotStepsDown` pins it.
+costs one GET per append and no clocks. `TestWinningAGarbageCollectedSlotStepsDown` pins it. Slot 1 has no predecessor, so a writer that wins it instead LISTs
+`meta/snap/` and requires it to be empty: GC never runs before two snapshots exist, so any snapshot means slot 1 was written and later
+deleted. The nightly simulator found that hole (BUGS.md #17): a node listed no snapshots, was paused mid-recovery, and resumed after GC
+to lead from an empty state.
 
 **Rule 3 — recovery starts from the newest snapshot that exists, found with LIST.** The PRD's `meta/head` hint is unsafe: a zombie can
 rewrite it to point at an old snapshot whose following entries were already deleted, and recovery would then probe into the deleted

@@ -279,3 +279,22 @@ func TestMultiSegmentCommitKeepsRequestOrder(t *testing.T) {
 		next += int64(i + 1)
 	}
 }
+
+// Regression (BUGS.md #17, nightly simulator): a node that listed no
+// snapshots, paused, and resumed after log GC found slot 1 empty and led
+// from an empty state, because slot 1 has no predecessor to confirm.
+func TestClaimingGarbageCollectedSlotOneIsRejected(t *testing.T) {
+	d := &driver{t: t, c: New(Config{Node: "seq-b", Cluster: "test"}, 3), store: objstore.NewMem(), now: 1_790_000_000_000, replies: map[uint64]*pb.Response{}}
+	// The log grew past slot 1, two snapshots were taken and GC deleted slot 1.
+	_ = d.store.Put(context.Background(), d.c.keys.Snap(110), metalog.EncodeSnapshot(&pb.Snapshot{Seq: 110, Epoch: 1}), false)
+	d.c.role, d.c.st = roleRecovering, d.c.newState() // stale view from before the snapshot existed
+	d.c.claim(1)
+	for _, e := range d.c.flush() {
+		if r, ok := e.(proc.StoreReq); ok {
+			d.step(d.exec(r))
+		}
+	}
+	if d.c.Role() == "leader" {
+		t.Fatal("led from an empty state after winning a garbage-collected slot 1")
+	}
+}

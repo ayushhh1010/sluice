@@ -500,7 +500,14 @@ func (c *Core) claim(seq uint64) {
 // entry we applied there proves our write is part of the live log.
 func (c *Core) confirmPredecessor(seq uint64, done func(ok bool)) {
 	if seq == 1 {
-		done(true)
+		// Slot 1 has no predecessor. It is legitimately empty only if the log
+		// never grew past it, and log GC runs only after two snapshots exist,
+		// so any snapshot means slot 1 was written and later deleted. A node
+		// that LISTed snapshots, paused, and probed slot 1 after GC would
+		// otherwise lead from an empty state in a dead zone.
+		c.storeRetry(proc.StoreReq{Op: proc.OpList, Prefix: c.keys.SnapPrefix(), Limit: 1}, func(res proc.StoreRes) {
+			done(res.Err == nil && len(res.List) == 0)
+		})
 		return
 	}
 	want := c.lastHash

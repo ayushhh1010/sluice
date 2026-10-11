@@ -25,6 +25,10 @@ func toTopicID(b []byte) (TopicID, bool) {
 	return t, true
 }
 
+// MaxPartitionsLimit bounds partitions per topic. Apply enforces it so a
+// corrupt or hostile log entry cannot make recovery allocate without bound.
+const MaxPartitionsLimit = 1 << 16
+
 // TP names a partition.
 type TP struct {
 	Topic     TopicID
@@ -163,7 +167,7 @@ func (s *State) applyOp(e *pb.Entry, op *pb.Op) error {
 	case *pb.Op_CreateTopic:
 		c := b.CreateTopic
 		id, ok := toTopicID(c.TopicId)
-		if !ok || c.Partitions == 0 {
+		if !ok || c.Partitions == 0 || c.Partitions > MaxPartitionsLimit {
 			return corrupt("bad create %v", c)
 		}
 		if _, dup := s.ByName[c.Name]; dup {

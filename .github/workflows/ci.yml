@@ -49,7 +49,13 @@ jobs:
       - name: 200 seeds, each replayed twice for determinism
         run: |
           go build -o bin/ ./cmd/sluice-sim
-          bin/sluice-sim -seeds 200 -start ${{ github.run_number }}000 -determinism -json sim.json
+          set +e
+          bin/sluice-sim -seeds 200 -start ${{ github.run_number }}000 -determinism -json sim.json | tee sim.txt
+          status=${PIPESTATUS[0]}
+          # Failing seeds become annotations: visible on the run page and through
+          # the public API, without downloading logs.
+          awk '/^FAIL seed/ {f=$0; getline v; print "::error title=simulation::" f " " v}' sim.txt | head -10
+          exit "$status"
       - uses: actions/upload-artifact@v7
         if: always()
         with: { name: sim-summary, path: sim.json }

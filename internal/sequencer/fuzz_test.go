@@ -38,3 +38,15 @@ func FuzzApply(f *testing.F) {
 		}
 	})
 }
+
+// Found by the nightly fuzzer: a CreateTopic with billions of partitions
+// made Apply allocate until the process was killed.
+func TestApplyRejectsHugePartitionCounts(t *testing.T) {
+	s := NewState(1000, 16)
+	tid := make([]byte, 16)
+	tid[0] = 1
+	err := s.Apply(&pb.Entry{Seq: 1, Epoch: 1, Ops: []*pb.Op{{Body: &pb.Op_CreateTopic{CreateTopic: &pb.CreateTopic{TopicId: tid, Name: "t", Partitions: 4_000_000_000}}}}})
+	if err == nil {
+		t.Fatal("applied a topic with 4 billion partitions")
+	}
+}

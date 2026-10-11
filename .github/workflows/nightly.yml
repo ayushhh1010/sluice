@@ -19,10 +19,20 @@ jobs:
       - name: as many seeds as fit in 45 minutes (20,000+ on a 4-core runner)
         run: |
           go build -o bin/ ./cmd/sluice-sim
-          bin/sluice-sim -seeds 100000 -budget 45m -start "$(date +%s)000" -json sim-nightly.json
+          set +e
+          bin/sluice-sim -seeds 100000 -budget 45m -start "$(date +%s)000" -json sim-nightly.json | tee sim.txt
+          status=${PIPESTATUS[0]}
+          # Failing seeds become annotations: visible on the run page and through
+          # the public API, without downloading logs.
+          awk '/^FAIL seed/ {f=$0; getline v; print "::error title=simulation::" f " " v}' sim.txt | head -10
+          exit "$status"
       - uses: actions/upload-artifact@v7
         if: always()
-        with: { name: sim-nightly, path: sim-nightly.json }
+        with:
+          name: sim-nightly
+          path: |
+            sim-nightly.json
+            sim.txt
 
   fuzz:
     runs-on: ubuntu-latest

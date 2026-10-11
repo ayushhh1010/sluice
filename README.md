@@ -16,7 +16,7 @@ them as a reproducible baseline rather than production figures.
 | | Result | Evidence |
 | --- | --- | --- |
 | Simulated client operations on the final code, 0 invariant violations | **3.29 M** across 6,000 seeds with crashes, zombie pauses, partitions, storage errors and lost responses | [BENCHMARKS.md#correctness](docs/BENCHMARKS.md#correctness) |
-| Bugs found by the simulator | **7**, two of which lost acknowledged data; each with seed, root cause, fix and regression test | [BUGS.md](docs/BUGS.md) |
+| Bugs found by the simulator | **8**, three of which lost acknowledged data; each with seed, root cause, fix and regression test | [BUGS.md](docs/BUGS.md) |
 | Live chaos: real processes `kill -9`'d (4 agents, the active sequencer) | **71,133** idempotent sends, all acked, **0 violations**; longest produce stall 3.5 s | [BENCHMARKS.md#live-chaos](docs/BENCHMARKS.md#live-chaos) |
 | Produce latency, 250 ms flush window, 30–70 ms injected storage latency | **p50 389 ms, p99 690 ms** at 2 MB/s | [BENCHMARKS.md#latency-vs-cost](docs/BENCHMARKS.md#latency-vs-cost) |
 | Object-store writes | **5,650 PUTs per GB** at the default window; 405 per GB with full segments | [BENCHMARKS.md#latency-vs-cost](docs/BENCHMARKS.md#latency-vs-cost) |

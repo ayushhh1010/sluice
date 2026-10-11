@@ -108,6 +108,7 @@ func (c *Config) setDefaults() {
 	if c.MaxPartitions == 0 {
 		c.MaxPartitions = 1024
 	}
+	c.MaxPartitions = min(c.MaxPartitions, MaxPartitionsLimit)
 	if c.PublicPrefix == "" {
 		c.PublicPrefix = "pg-"
 	}
