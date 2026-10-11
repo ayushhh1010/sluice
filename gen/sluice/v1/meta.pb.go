@@ -1191,8 +1191,13 @@ type Snapshot struct {
 	// checks the stored entry at seq against it (see the GC safety argument
 	// in DESIGN.md).
 	LastEntrySha256 []byte `protobuf:"bytes,13,opt,name=last_entry_sha256,json=lastEntrySha256,proto3" json:"last_entry_sha256,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Cost guard: Class A operations counted so far on UTC day class_a_day
+	// (days since the epoch). Carried so a restart or failover does not reset
+	// the daily budget.
+	ClassADay     int64 `protobuf:"varint,14,opt,name=class_a_day,json=classADay,proto3" json:"class_a_day,omitempty"`
+	ClassACount   int64 `protobuf:"varint,15,opt,name=class_a_count,json=classACount,proto3" json:"class_a_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Snapshot) Reset() {
@@ -1314,6 +1319,20 @@ func (x *Snapshot) GetLastEntrySha256() []byte {
 		return x.LastEntrySha256
 	}
 	return nil
+}
+
+func (x *Snapshot) GetClassADay() int64 {
+	if x != nil {
+		return x.ClassADay
+	}
+	return 0
+}
+
+func (x *Snapshot) GetClassACount() int64 {
+	if x != nil {
+		return x.ClassACount
+	}
+	return 0
 }
 
 type TopicState struct {
@@ -1796,7 +1815,7 @@ const file_sluice_v1_meta_proto_rawDesc = "" +
 	"baseOffset\x12\x15\n" +
 	"\x06max_ts\x18\x06 \x01(\x03R\x05maxTs\x12\x1d\n" +
 	"\n" +
-	"commit_seq\x18\a \x01(\x04R\tcommitSeq\"\xae\x04\n" +
+	"commit_seq\x18\a \x01(\x04R\tcommitSeq\"\xf2\x04\n" +
 	"\bSnapshot\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x14\n" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x12\x16\n" +
@@ -1814,7 +1833,9 @@ const file_sluice_v1_meta_proto_rawDesc = "" +
 	"\x0fprior_snapshots\x18\v \x03(\x04R\x0epriorSnapshots\x12 \n" +
 	"\flog_gc_floor\x18\f \x01(\x04R\n" +
 	"logGcFloor\x12*\n" +
-	"\x11last_entry_sha256\x18\r \x01(\fR\x0flastEntrySha256\"\xcc\x01\n" +
+	"\x11last_entry_sha256\x18\r \x01(\fR\x0flastEntrySha256\x12\x1e\n" +
+	"\vclass_a_day\x18\x0e \x01(\x03R\tclassADay\x12\"\n" +
+	"\rclass_a_count\x18\x0f \x01(\x03R\vclassACount\"\xcc\x01\n" +
 	"\n" +
 	"TopicState\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x12\n" +

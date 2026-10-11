@@ -298,3 +298,18 @@ func TestClaimingGarbageCollectedSlotOneIsRejected(t *testing.T) {
 		t.Fatal("led from an empty state after winning a garbage-collected slot 1")
 	}
 }
+
+// The cost guard's daily count survives a failover: otherwise every
+// restart would grant a fresh day's budget of billable writes.
+func TestCostGuardCountSurvivesFailover(t *testing.T) {
+	d := newDriver(t, Config{SnapshotEvery: 1, ClassADailyLimit: 30_000})
+	d.c.countClassA(25_000)
+	d.createTopic("orders", 1) // appends an entry, which triggers a snapshot
+	d.run(1_000)
+	d2 := &driver{t: t, c: New(Config{Node: "seq-b", Cluster: "test", ClassADailyLimit: 30_000}, 2), store: d.store, now: d.now, replies: map[uint64]*pb.Response{}}
+	d2.step(Start{})
+	d2.run(15_000)
+	if d2.c.classACount < 25_000 {
+		t.Fatalf("new leader counts %d Class A operations today, want at least 25,000", d2.c.classACount)
+	}
+}

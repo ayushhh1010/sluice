@@ -167,6 +167,11 @@ message Snapshot {
   // checks the stored entry at seq against it (see the GC safety argument
   // in DESIGN.md).
   bytes last_entry_sha256 = 13;
+  // Cost guard: Class A operations counted so far on UTC day class_a_day
+  // (days since the epoch). Carried so a restart or failover does not reset
+  // the daily budget.
+  int64 class_a_day = 14;
+  int64 class_a_count = 15;
 }
 
 message TopicState {

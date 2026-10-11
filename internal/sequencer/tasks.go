@@ -34,6 +34,7 @@ func (c *Core) maybeSnapshot() {
 	seq := c.st.Seq
 	snap := c.st.Snapshot(true)
 	snap.LastEntrySha256 = append([]byte(nil), c.lastHash[:]...)
+	snap.ClassADay, snap.ClassACount = c.classADay, c.classACount
 	data := metalog.EncodeSnapshot(snap)
 	c.storeRetry(proc.StoreReq{Op: proc.OpPut, Key: c.keys.Snap(seq), Data: data}, func(proc.StoreRes) {
 		c.snapshotting = false

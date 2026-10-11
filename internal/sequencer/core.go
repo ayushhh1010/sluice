@@ -395,6 +395,11 @@ func (c *Core) loadSnapshot(seq uint64) {
 		st.PriorSnaps = append(st.PriorSnaps, seq)
 		c.st = st
 		copy(c.lastHash[:], snap.LastEntrySha256)
+		// Keep the cost guard's daily count across restarts and failovers
+		// (stale by at most one snapshot interval).
+		if day := c.now / dayMs; snap.ClassADay == day && snap.ClassACount > c.classACount {
+			c.classADay, c.classACount = day, snap.ClassACount
+		}
 		c.lastSnapSeq, c.lastSnapAt = seq, c.now
 		c.probe()
 	})
