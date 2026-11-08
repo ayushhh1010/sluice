@@ -311,11 +311,17 @@ func (w *World) storeOp(n *node, inc int, r proc.StoreReq) {
 			w.stats["store_error"]++
 		case w.faulty && mutating && w.rnd.Intn(100) < w.knobs.LostResponsePct:
 			// Applied, but the response is lost: the caller sees a timeout.
-			w.store.apply(r)
+			applied := w.store.apply(r)
 			res = proc.StoreRes{ID: r.ID, Err: errTimeout}
 			w.stats["store_lost_response"]++
+			if storeJournal != nil {
+				storeJournal(w.now, n.name, r, applied)
+			}
 		default:
 			res = w.store.apply(r)
+			if storeJournal != nil {
+				storeJournal(w.now, n.name, r, res)
+			}
 		}
 		w.at(w.now+w.storeLatency(), func() { w.deliver(n, inc, res) })
 	})
@@ -605,6 +611,10 @@ func Run(cfg Config) Result {
 
 // captured lets tests inspect a finished world.
 var captured func(*World)
+
+// storeJournal, when set by a debug test, sees every store operation that
+// reached the bucket, with the node that issued it and the bucket's answer.
+var storeJournal func(now int64, node string, r proc.StoreReq, res proc.StoreRes)
 
 // idle reports whether every client finished its last operation.
 func (w *World) idle() bool {

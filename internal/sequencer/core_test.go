@@ -178,6 +178,53 @@ func TestWinningAGarbageCollectedSlotStepsDown(t *testing.T) {
 	}
 }
 
+// deposeThroughGC makes the log look as it does to a deposed leader after a
+// newer leader appended past it and log GC deleted that prefix: our next
+// slot is empty, and so is the slot of our own last entry.
+func deposeThroughGC(d *driver) {
+	_ = d.store.Delete(context.Background(), d.c.keys.Log(d.c.State().Seq))
+}
+
+// Regression (BUGS.md #20): an empty next slot does not prove leadership
+// once GC has deleted it, so the read barrier must not answer OffsetFetch
+// from stale memory.
+func TestReadBarrierSeesThroughGarbageCollectedSlot(t *testing.T) {
+	d := newDriver(t, Config{})
+	d.createTopic("orders", 1)
+	deposeThroughGC(d)
+	of := kmsg.NewPtrOffsetFetchRequest()
+	of.Version = 7
+	of.Group = "g"
+	of.Topics = []kmsg.OffsetFetchRequestTopic{{Topic: "orders", Partitions: []int32{0}}}
+	r := d.call(&pb.Request{Body: &pb.Request_Kafka{Kafka: &pb.KafkaRequest{
+		ApiKey: int32(of.Key()), ApiVersion: int32(of.GetVersion()), Body: of.AppendTo(nil), Listener: "internal", ClientId: "test",
+	}}})
+	if r.Code == pb.Code_CODE_OK {
+		resp := kmsg.NewPtrOffsetFetchResponse()
+		resp.Version = of.Version
+		if err := resp.ReadFrom(r.GetKafka().GetBody()); err != nil {
+			t.Fatal(err)
+		}
+		if resp.ErrorCode == 0 && resp.Topics[0].Partitions[0].ErrorCode == 0 {
+			t.Fatalf("deposed leader answered OffsetFetch from stale memory")
+		}
+	}
+	if d.c.Role() == "leader" {
+		t.Fatalf("still leader after the log moved past it")
+	}
+}
+
+// Regression (BUGS.md #20): the periodic next-slot probe, which bounds stale
+// reads, must also see through a garbage-collected slot.
+func TestNextSlotProbeSeesThroughGarbageCollectedSlot(t *testing.T) {
+	d := newDriver(t, Config{})
+	deposeThroughGC(d)
+	d.run(3 * 1_000)
+	if d.c.Role() == "leader" {
+		t.Fatalf("still leader after the log moved past it")
+	}
+}
+
 // Regression (BUGS.md #5): grace must outlast every commit retry.
 func TestGCGraceCoversCommitRetries(t *testing.T) {
 	c := Config{GCGraceMs: 1_000, MaxSegmentAgeMs: 60_000}

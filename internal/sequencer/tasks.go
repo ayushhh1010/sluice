@@ -421,14 +421,18 @@ func (c *Core) confirmAndSweep(found []objstore.ObjectInfo, attempt int) {
 		c.after(500, func() { c.confirmAndSweep(found, attempt+1) })
 		return
 	}
-	seq := c.st.Seq + 1
-	c.storeRetry(proc.StoreReq{Op: proc.OpHead, Key: c.keys.Log(seq)}, func(res proc.StoreRes) {
-		if c.st.Seq+1 != seq || c.appending != nil {
-			c.confirmAndSweep(found, attempt+1) // our own append raced the probe
+	// A paused zombie running a stale sweep would delete objects the real
+	// leader committed, so prove nobody has appended past our log first.
+	c.probeTail(func(r tailResult) {
+		if c.role != roleLeader {
 			return
 		}
-		if res.Err == nil {
-			c.stepDown("next slot taken (orphan sweep)")
+		switch r {
+		case tailTaken:
+			c.stepDown("log moved past us (orphan sweep)")
+			return
+		case tailUnknown:
+			c.after(500, func() { c.confirmAndSweep(found, attempt+1) })
 			return
 		}
 		var keys []string

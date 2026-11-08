@@ -722,10 +722,57 @@ func (c *Core) appended() {
 	c.runBarrier()
 }
 
+type tailResult int
+
+const (
+	tailOurs    tailResult = iota // nobody had appended past our log when the probe ran
+	tailTaken                     // someone else has appended past our log: we are deposed
+	tailUnknown                   // transient error, or our own append raced the probe
+)
+
+// probeTail proves, at an instant after the call, whether anyone has
+// appended past this leader's log. A 404 on the next slot alone is not
+// proof: log GC may have deleted that slot after a newer leader wrote it,
+// leaving it empty forever (BUGS.md #20). Deleted entries form a prefix
+// (DESIGN §3, Rule 1), so in that case our own last entry is gone too.
+// The probe therefore HEADs slot N and, on a 404, GETs N−1 and requires
+// the exact bytes we applied there.
+func (c *Core) probeTail(done func(tailResult)) {
+	if c.appending != nil {
+		done(tailUnknown)
+		return
+	}
+	seq, want := c.st.Seq+1, c.lastHash
+	raced := func() bool { return c.role != roleLeader || c.st.Seq+1 != seq || c.appending != nil }
+	c.store(proc.StoreReq{Op: proc.OpHead, Key: c.keys.Log(seq)}, func(res proc.StoreRes) {
+		switch {
+		case raced():
+			done(tailUnknown)
+		case res.Err == nil:
+			done(tailTaken)
+		case !errors.Is(res.Err, objstore.ErrNotFound):
+			done(tailUnknown)
+		default:
+			c.store(proc.StoreReq{Op: proc.OpGet, Key: c.keys.Log(seq - 1)}, func(got proc.StoreRes) {
+				switch {
+				case raced():
+					done(tailUnknown)
+				case got.Err == nil && sha256.Sum256(got.Data) == want:
+					done(tailOurs)
+				case got.Err == nil || errors.Is(got.Err, objstore.ErrNotFound):
+					done(tailTaken) // our last entry was replaced or garbage collected
+				default:
+					done(tailUnknown)
+				}
+			})
+		}
+	})
+}
+
 // readBarrier runs fn once this leader has proven, after fn was requested,
-// that nobody has appended past its log: a HEAD of the next slot returned
-// 404. Reads that must be linearizable (committed offsets) wait for it, so
-// a deposed leader cannot answer them from stale memory.
+// that nobody has appended past its log (probeTail). Reads that must be
+// linearizable (committed offsets) wait for it, so a deposed leader cannot
+// answer them from stale memory.
 func (c *Core) readBarrier(fn func(ok bool)) {
 	c.barrier = append(c.barrier, fn)
 	c.runBarrier()
@@ -738,19 +785,18 @@ func (c *Core) runBarrier() {
 	ws := c.barrier
 	c.barrier = nil
 	c.barrierBusy = true
-	seq := c.st.Seq + 1
-	c.store(proc.StoreReq{Op: proc.OpHead, Key: c.keys.Log(seq)}, func(res proc.StoreRes) {
+	c.probeTail(func(r tailResult) {
 		c.barrierBusy = false
-		switch {
-		case errors.Is(res.Err, objstore.ErrNotFound):
+		switch r {
+		case tailOurs:
 			for _, w := range ws {
 				w(true)
 			}
-		case res.Err == nil && c.st.Seq+1 == seq && c.appending == nil:
+		case tailTaken:
 			c.barrier = append(ws, c.barrier...)
-			c.stepDown("next slot taken (read barrier)")
+			c.stepDown("log moved past us (read barrier)")
 			return
-		default: // transient error, or our own append raced the probe
+		default:
 			c.barrier = append(ws, c.barrier...)
 		}
 		c.runBarrier()
@@ -758,15 +804,11 @@ func (c *Core) runBarrier() {
 }
 
 // checkNextSlot bounds how long a deposed leader keeps serving reads: if
-// our next slot exists, someone else is writing the log.
+// someone else has appended past our log, step down.
 func (c *Core) checkNextSlot() {
-	if c.appending != nil {
-		return
-	}
-	seq := c.st.Seq + 1
-	c.store(proc.StoreReq{Op: proc.OpHead, Key: c.keys.Log(seq)}, func(res proc.StoreRes) {
-		if res.Err == nil && c.appending == nil && c.st.Seq+1 == seq {
-			c.stepDown("next slot taken")
+	c.probeTail(func(r tailResult) {
+		if r == tailTaken {
+			c.stepDown("log moved past us")
 		}
 	})
 }

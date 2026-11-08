@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/ayushhh1010/sluice/internal/checker"
+	"github.com/ayushhh1010/sluice/internal/metalog"
+	"github.com/ayushhh1010/sluice/internal/proc"
 	"github.com/ayushhh1010/sluice/internal/sequencer"
 )
 
@@ -143,5 +147,82 @@ func TestDebugLeader(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestDebugOffsets prints one timeline of role changes, metadata-store
+// operations and the offset commits and fetches of one group partition:
+//
+//	SLUICE_SEED=1 SLUICE_GROUP=cg-0 SLUICE_TOPIC=t0 SLUICE_PART=0 go test ./internal/sim -run TestDebugOffsets -v
+func TestDebugOffsets(t *testing.T) {
+	s := os.Getenv("SLUICE_SEED")
+	if s == "" {
+		t.Skip("set SLUICE_SEED")
+	}
+	seed, _ := strconv.ParseUint(s, 10, 64)
+	group, topic := os.Getenv("SLUICE_GROUP"), os.Getenv("SLUICE_TOPIC")
+	pn, _ := strconv.Atoi(os.Getenv("SLUICE_PART"))
+	type line struct {
+		at  int64
+		txt string
+	}
+	var lines []line
+	storeJournal = func(now int64, node string, r proc.StoreReq, res proc.StoreRes) {
+		if !strings.Contains(r.Key, "/meta/") && !strings.Contains(r.Prefix, "/meta/") {
+			return
+		}
+		key := r.Key
+		if i := strings.Index(key, "/meta/"); i >= 0 {
+			key = key[i+6:]
+		}
+		txt := fmt.Sprintf("STORE %-8s %-6s %s%s err=%v", node, r.Op, key, r.Prefix, res.Err)
+		if r.Op == proc.OpList {
+			txt += fmt.Sprintf(" n=%d", len(res.List))
+		}
+		if (r.Op == proc.OpPutIfAbsent || r.Op == proc.OpPut) && strings.Contains(r.Key, "/meta/log/") {
+			if e, err := metalog.DecodeEntry(r.Data); err == nil {
+				txt += fmt.Sprintf(" epoch=%d writer=%s", e.Epoch, e.Writer)
+				for _, op := range e.Ops {
+					if co := op.GetCommitOffsets(); co != nil && co.Group == group {
+						for _, o := range co.Offsets {
+							if o.Topic == topic && int(o.Partition) == pn {
+								txt += fmt.Sprintf(" COMMIT=%d", o.Offset)
+							}
+						}
+					}
+				}
+			}
+		}
+		lines = append(lines, line{now, txt})
+	}
+	defer func() { storeJournal = nil }()
+	var w *World
+	captured = func(x *World) { w = x }
+	var trace strings.Builder
+	res := Run(Config{Seed: seed, DurationMs: 60_000, Faults: true, Trace: &trace})
+	for _, l := range strings.Split(trace.String(), "\n") {
+		f := strings.Fields(l)
+		if len(f) > 1 && (f[1] == "ROLE" || f[1] == "CRASH" || f[1] == "RESTART" || f[1] == "PAUSE" || f[1] == "PARTITION" || f[1] == "ISOLATE" || f[1] == "HEAL") {
+			at, _ := strconv.ParseInt(f[0], 10, 64)
+			lines = append(lines, line{at, strings.Join(f[1:], " ")})
+		}
+	}
+	p := checker.Partition{Topic: topic, Partition: int32(pn)}
+	for _, c := range w.hist.Commits {
+		if c.Group == group && c.Part == p {
+			lines = append(lines, line{c.Start, fmt.Sprintf("CLIENT commit %d start (ends %d acked=%v)", c.Offset, c.End, c.Acked)})
+		}
+	}
+	for _, f := range w.hist.OffsetFetches {
+		if f.Group == group && f.Part == p {
+			lines = append(lines, line{f.End, fmt.Sprintf("CLIENT fetch -> %d (started %d)", f.Offset, f.Start)})
+		}
+	}
+	sort.SliceStable(lines, func(i, j int) bool { return lines[i].at < lines[j].at })
+	for _, l := range lines {
+		t.Logf("%7d %s", l.at, l.txt)
+	}
+	for _, v := range res.Violations {
+		t.Log("VIOLATION", v)
 	}
 }

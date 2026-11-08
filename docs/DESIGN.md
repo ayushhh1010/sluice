@@ -73,8 +73,8 @@ consistent with the true log. If I get a 412, I read N: if it is byte-identical 
 was lost); otherwise someone else owns N, and since epochs only grow along the log, they are a newer leader and I step down. Two
 sequencers that both believe they lead cannot diverge; they only waste requests until one steps down.
 
-**Liveness only.** A standby pings the leader every second and takes over after `leader.timeout` without a leader. A leader also HEADs
-its next slot every second, which bounds how long a deposed leader serves stale *reads* (writes are already impossible). A request
+**Liveness only.** A standby pings the leader every second and takes over after `leader.timeout` without a leader. A leader also probes
+its next slot every second (§3, Rule 5), which bounds how long a deposed leader serves stale *reads* (writes are already impossible). A request
 that carries a higher epoch than the leader's makes it step down at once. A restarting sequencer waits two ping rounds before its first
 takeover attempt, and a standby treats a peer that is *recovering* as alive for up to `leader.timeout`, which removed a double failover
 seen in the live chaos run (BUGS.md #14).
@@ -88,8 +88,8 @@ this one operation); time-based leases for safety (a paused process cannot know 
 
 ## 3. Garbage-collecting a put-if-absent log
 
-Put-if-absent proves a slot was *empty*, not that it was *never written*. Once old log entries are deleted, that difference matters.
-Two real bugs came from it (BUGS.md #3, #16); the rules below close them.
+Put-if-absent proves a slot was *empty*, not that it was *never written*, and a 404 proves the same. Once old log entries are deleted,
+that difference matters. Four real bugs came from it (BUGS.md #3, #16, #17, #20); the rules below close them.
 
 **Zombie append into a deleted slot (found by the simulator, seed 78).** A leader pauses while retrying the PUT of slot N. The new
 leader appends, snapshots twice and garbage-collects entries ≤ N. The zombie resumes, its PUT of N *succeeds* (the slot is empty), it
@@ -114,6 +114,13 @@ be newer than the true log, so recovering from the maximum snapshot never probes
 
 **Rule 4 — snapshots below the GC floor are deleted by LIST, not by memory.** A new leader only knows the snapshots in its own chain;
 snapshots written by others leaked until GC started listing them (BUGS.md #4).
+
+**Rule 5 — an empty next slot proves leadership only with its predecessor.** A leader asks "has anyone appended past me?" in three
+places: the read barrier (§10), the once-a-second probe that bounds stale reads (§2) and the orphan sweep (§12). A 404 on slot N is not
+an answer on its own: a newer leader may have written N and GC deleted it between two probes, and then the slot stays empty forever.
+The nightly simulator found exactly that (BUGS.md #20): a deposed leader kept leading in memory, answered OffsetFetch from stale state
+and swept away segments the real leader had committed. `probeTail` therefore follows a 404 on N with a GET of N−1 and requires the
+exact entry it applied there; if N was deleted, so was N−1 (Rule 1). It costs one GET (Class B) per probe.
 
 ## 4. The write path and when we acknowledge
 
@@ -210,8 +217,8 @@ rejoin. Committed offsets go through the metadata log and are acknowledged only 
 * **Generations never repeat.** New groups start at `epoch << 16`, and a per-name floor survives in-memory cleanup of empty groups. Both
   were simulator finds (BUGS.md #1, #2): repeated generation numbers would let two incarnations of "generation 1" mix.
 * **Linearizable OffsetFetch.** A deposed leader could otherwise answer OffsetFetch from stale memory for up to a second, returning an
-  offset older than one already acknowledged. OffsetFetch now waits for a *read barrier*: a HEAD of the next log slot, started after the
-  request arrived, must return 404 (or an append must complete) before it answers. Fetch, Metadata and ListOffsets stay barrier-free:
+  offset older than one already acknowledged. OffsetFetch now waits for a *read barrier*: a probe started after the request arrived must
+  prove that nobody has appended past this leader's log (§3, Rule 5), or an append must complete, before it answers. Fetch, Metadata and ListOffsets stay barrier-free:
   a stale answer there is a prefix of the truth, which clients handle.
 
 ## 11. Idempotent producer
@@ -235,8 +242,8 @@ out of scope.
 * **Deletion.** The leader deletes tombstoned objects after their deadline. Conditional deletes are never relied on (R2 has been observed
   ignoring `If-Match` on DELETE).
 * **Orphan sweep.** Hourly, objects in `data/` and `merged/` older than an hour that no ref, tombstone or pending commit names are
-  deleted. Before deleting, the leader re-checks that its next log slot is still empty: a paused zombie running a stale sweep would
-  otherwise delete objects the real leader committed.
+  deleted. Before deleting, the leader re-proves that nobody has appended past its log (§3, Rule 5): a paused zombie running a stale
+  sweep would otherwise delete objects the real leader committed (BUGS.md #20).
 
 ## 13. Deterministic simulation
 
@@ -275,8 +282,9 @@ With A agents under continuous load, flush window w and E metadata entries per s
 requests: agents never flush empty buffers, and the leader's background HEADs are Class B.
 
 The sequencer counts Class A operations per UTC day (its own plus what agents report in heartbeats). At `--cost-guard-daily` (30,000 by
-default, about 0.9 M a month) public listeners turn read-only until midnight and the playground shows a banner. The counter is in
-memory, so a sequencer restart resets it; restarts are rare, and this is documented in the runbook.
+default, about 0.9 M a month) public listeners turn read-only until midnight and the playground shows a banner. The day's count is
+carried in snapshots, so a restart or failover forgets only what was counted since the newest snapshot (taken every 1,000 entries or
+10 minutes while the log grows), not the whole day.
 
 ## 16. Deviations from the PRD
 
@@ -284,6 +292,7 @@ memory, so a sequencer restart resets it; restarts are rare, and this is documen
 | --- | --- | --- |
 | `meta/head` snapshot hint | LIST newest snapshot on recovery | A stale hint after log GC lets recovery rewrite history (§3) |
 | Put-if-absent alone fences writers | Plus predecessor confirmation and ascending GC | Deleted slots can be "won" (§3) |
+| An empty next slot proves leadership | Plus the predecessor check (`probeTail`) | Deleted slots look empty to a deposed leader (§3, Rule 5) |
 | One operation per entry | Many operations per entry | One PUT for commits, offsets and admin together |
 | `MarkDead` operations | Tombstones derived at apply time | Fewer PUTs, no crash window (§12) |
 | `CommitBatches` per segment | Ordered multi-segment commits | Order and throughput (§6) |
