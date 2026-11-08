@@ -89,12 +89,16 @@ go run ./cmd/sluice-sim -seeds 6000 -start 1000000 -json sim.json
 
 | Run (final code) | Seeds | Client operations | Violations | Wall time (12 threads) |
 | --- | --- | --- | --- | --- |
-| 2026-10-11, seeds 11,000,000–11,011,999 (after fixes #17–#19) | 12,000 | **6,516,413** | **0** | 29 min |
-| 2026-10-06, seeds 1,000,000–1,005,999 (before #17–#19) | 6,000 | 3,293,307 | 0 | 26 min |
+| 2026-11-08, seeds 12,000,000–12,011,999 (after fix #20) | 12,000 | **6,355,082** | **0** | 16 min |
+| 2026-10-11, seeds 11,000,000–11,011,999 (after #17–#19, before #20) | 12,000 | 6,516,413 | 0 | 29 min |
+| 2026-10-06, seeds 1,000,000–1,005,999 (before #17–#20) | 6,000 | 3,293,307 | 0 | 26 min |
 
-Raw: [`sim-confirm-2026-10-11.txt`](results/sim-confirm-2026-10-11.txt), [`sim-final-2026-10-06.txt`](results/sim-final-2026-10-06.txt).
+Raw: [`sim-confirm-2026-11-08.txt`](results/sim-confirm-2026-11-08.txt),
+[`sim-confirm-2026-10-11.txt`](results/sim-confirm-2026-10-11.txt), [`sim-final-2026-10-06.txt`](results/sim-final-2026-10-06.txt).
 
-The 2026-10-06 run was clean but not exhaustive: the nightly job's larger daily sweeps then found BUGS.md #17, which needs two sequencer pauses in a narrow window, so per-run counts are evidence, not proof.
+Clean runs are evidence, not proof. Both earlier runs were clean, and the nightly job's larger daily sweeps (20,000+ seeds each) still
+found bugs afterwards: #17 after the 2026-10-06 run, and #20 after the 2026-10-11 run, on 3 of 15 nights. Each needs two leadership
+changes and a log GC to line up in a narrow window.
 
 Earlier runs on the code as it evolved (each after the fixes listed in BUGS.md up to that point):
 
